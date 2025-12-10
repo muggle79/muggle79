@@ -1,0 +1,313 @@
+
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>百家樂隨機模擬器（含局數設定與建議投注）</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; background: #f7f7fb; padding: 22px; color: #222; text-align: center; }
+    .controls { margin: 12px 0; display:flex; flex-wrap:wrap; justify-content:center; gap:8px; }
+    .controls > * { margin:4px; }
+    button { padding:8px 14px; font-size:15px; cursor:pointer; }
+    input[type="number"], input[type="text"] { padding:6px 8px; font-size:14px; width:120px; border-radius:4px; border:1px solid #ccc; }
+    label { font-size:14px; }
+    #result { font-size:18px; margin-top:14px; color:#111; }
+    #stats { margin-top:18px; display:inline-block; text-align:left; min-width:320px; background:#fff; padding:14px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.06); }
+    #stats p { margin:6px 0; font-size:15px; }
+    .small { font-size:13px; color:#666; margin-top:6px; }
+    #suggest { margin-top:14px; display:inline-block; text-align:left; min-width:320px; background:#fff; padding:12px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.04); }
+    table { border-collapse:collapse; width:100%; font-size:14px; }
+    td, th { padding:6px 8px; border-bottom:1px solid #eee; text-align:left; }
+    th { text-align:left; font-weight:600; }
+  </style>
+</head>
+<body>
+
+  <h1>百家樂隨機模擬器（含局數設定與建議投注）</h1>
+
+  <div class="controls">
+    <button id="btnOne">抽一手</button>
+    <button id="btn100">連抽 100 次</button>
+    <button id="btn1k">連抽 1,000 次</button>
+    <button id="btn10k">連抽 10,000 次</button>
+    <button id="btnReset">清空統計</button>
+    <button id="btnCSV">下載 CSV（目前統計）</button>
+  </div>
+
+  <div class="controls" style="margin-top:10px;">
+    <label>局數：
+      <input id="inputRounds" type="number" min="1" value="100" />
+    </label>
+    <label>本金（用於建議投注）：
+      <input id="inputBankroll" type="number" min="1" value="1000" />
+    </label>
+    <label><input id="chkAppend" type="checkbox" checked /> 新增到總計</label>
+    <button id="btnSimSuggest">模擬並建議投注</button>
+  </div>
+
+  <div id="result"></div>
+
+  <div id="stats" aria-live="polite">
+    <p>莊 (1)：<strong id="b">0</strong> （<span id="bPct">0.00%</span>）</p>
+    <p>閒 (2)：<strong id="p">0</strong> （<span id="pPct">0.00%</span>）</p>
+    <p>和 (3)：<strong id="t">0</strong> （<span id="tPct">0.00%</span>）</p>
+    <p>總數：<strong id="total">0</strong></p>
+    <p class="small" id="timing"></p>
+  </div>
+
+  <div id="suggest" aria-live="polite">
+    <h3 style="margin:6px 0 8px 0;">建議投注（基於模擬結果）</h3>
+    <div id="suggestContent">
+      <p class="small">尚未進行模擬。請輸入局數與本金，然後按「模擬並建議投注」。</p>
+    </div>
+  </div>
+
+<script>
+/*
+  新增功能說明：
+  - 可輸入局數（inputRounds）和本金（inputBankroll）。
+  - 可選擇是否把模擬結果新增到總計（chkAppend）。
+  - 按「模擬並建議投注」會模擬指定局數，回傳各項機率、預期報酬與 Kelly 建議押注比例與金額。
+  - 使用常見賠率假設：莊 payout = 0.95（有 5% 佣金）、閒 payout = 1、和 payout = 8。
+  - Kelly 計算採用簡化公式 f* = (b * p - q) / b，若 f* <= 0 則不建議（顯示為 0）。
+*/
+
+let b = 0, p = 0, t = 0, total = 0;
+
+function baccaratRandom() {
+  const r = Math.random();
+  if (r < 0.458) return 1;
+  else if (r < 0.458 + 0.446) return 2;
+  else return 3;
+}
+
+function formatPct(count, tot) {
+  if (tot === 0) return "0.00%";
+  return (count / tot * 100).toFixed(2) + "%";
+}
+
+function refreshDOM() {
+  document.getElementById("b").innerText = b;
+  document.getElementById("p").innerText = p;
+  document.getElementById("t").innerText = t;
+  document.getElementById("total").innerText = total;
+  document.getElementById("bPct").innerText = formatPct(b, total);
+  document.getElementById("pPct").innerText = formatPct(p, total);
+  document.getElementById("tPct").innerText = formatPct(t, total);
+}
+
+// 單手抽取
+function drawOne() {
+  const res = baccaratRandom();
+  if (res === 1) b++;
+  else if (res === 2) p++;
+  else t++;
+  total++;
+  refreshDOM();
+  document.getElementById("result").innerText = "結果：" + res;
+  document.getElementById("timing").innerText = "";
+}
+
+// 批次抽取（內部使用）
+function simulateRounds(n) {
+  let addB = 0, addP = 0, addT = 0;
+  let last = 0;
+  for (let i = 0; i < n; i++) {
+    last = baccaratRandom();
+    if (last === 1) addB++;
+    else if (last === 2) addP++;
+    else addT++;
+  }
+  return { addB, addP, addT, last };
+}
+
+// 一般批次（加入總計）
+function drawMany(n) {
+  if (!Number.isFinite(n) || n <= 0) return;
+  const start = performance.now();
+  const res = simulateRounds(n);
+  b += res.addB;
+  p += res.addP;
+  t += res.addT;
+  total += n;
+  refreshDOM();
+  const end = performance.now();
+  document.getElementById("result").innerText = "最後一手：" + res.last + "（新增：莊 " + res.addB + " / 閒 " + res.addP + " / 和 " + res.addT + "）";
+  document.getElementById("timing").innerText = "執行時間（不含 UI 更新）： " + (end - start).toFixed(2) + " ms（模擬 " + n + " 次）";
+}
+
+// 產生並下載 CSV（目前聚合統計）
+function downloadCSV() {
+  const rows = [
+    ["項目", "數量", "百分比"],
+    ["莊 (1)", b, formatPct(b, total)],
+    ["閒 (2)", p, formatPct(p, total)],
+    ["和 (3)", t, formatPct(t, total)],
+    ["總數", total, total === 0 ? "0.00%" : "100%"]
+  ];
+  const csvContent = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g,'""')}"`).join(",")).join("\n");
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const now = new Date().toISOString().replace(/[:.]/g, "-");
+  a.download = "baccarat_stats_" + now + ".csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// 建議投注計算（傳入模擬新增量與模擬次數）
+function computeSuggestion(addB, addP, addT, n, bankroll) {
+  // 模擬內的勝率估計
+  const p_b = (n === 0) ? 0 : addB / n;
+  const p_p = (n === 0) ? 0 : addP / n;
+  const p_t = (n === 0) ? 0 : addT / n;
+
+  // 常見賠率假設（可按需求調整）
+  const payout = { banker: 0.95, player: 1.0, tie: 8.0 };
+
+  // 對每種選項計算 EV 與 Kelly fraction（簡化公式）
+  function calc(b, pwin) {
+    const q = 1 - pwin;
+    const ev = b * pwin - q; // 每單位押注的期望值
+    let f = (b * pwin - q) / b; // Kelly fraction
+    if (!isFinite(f) || f < 0) f = 0;
+    return { ev, f };
+  }
+
+  const banker = calc(payout.banker, p_b);
+  const player = calc(payout.player, p_p);
+  const tie    = calc(payout.tie, p_t);
+
+  // 選擇建議依據：優先正的 Kelly fraction (f)，若皆為 0 則選最大 EV（但若 EV <= 0 則不建議）
+  const options = [
+    { name: "莊", key: "banker", prob: p_b, payout: payout.banker, ev: banker.ev, f: banker.f },
+    { name: "閒", key: "player", prob: p_p, payout: payout.player, ev: player.ev, f: player.f },
+    { name: "和", key: "tie",    prob: p_t, payout: payout.tie,    ev: tie.ev,    f: tie.f }
+  ];
+
+  // 找出最大正 Kelly
+  const bestKelly = options.slice().sort((a,b)=> b.f - a.f)[0];
+  // 找出最大 EV
+  const bestEV = options.slice().sort((a,b)=> b.ev - a.ev)[0];
+
+  // 決策規則：若 bestKelly.f > 0 => 建議其 Kelly（但 cap 範圍），否則若 bestEV.ev > 0 建議其小額（使用 conservative fraction），否則不建議投注
+  const maxFractionCap = 0.25; // 建議上限（風險控制）
+  let suggestion = { recommended: null, reason: "", fraction: 0, amount: 0, details: options };
+
+  if (bestKelly.f > 0) {
+    suggestion.recommended = bestKelly;
+    suggestion.reason = "依 Kelly 準則（估計邊際 > 0）";
+    suggestion.fraction = Math.min(bestKelly.f, maxFractionCap);
+    suggestion.amount = Math.round(bankroll * suggestion.fraction * 100) / 100;
+  } else if (bestEV.ev > 0) {
+    suggestion.recommended = bestEV;
+    suggestion.reason = "無正 Kelly，但有正期望值，保守建議較小倉位";
+    suggestion.fraction = Math.min(0.05, maxFractionCap); // 保守 5%
+    suggestion.amount = Math.round(bankroll * suggestion.fraction * 100) / 100;
+  } else {
+    suggestion.recommended = null;
+    suggestion.reason = "無正期望值或 Kelly，建議暫不投注";
+    suggestion.fraction = 0;
+    suggestion.amount = 0;
+  }
+
+  return suggestion;
+}
+
+// 在畫面上顯示建議
+function renderSuggestion(sugg, n) {
+  const container = document.getElementById("suggestContent");
+  const opts = sugg.details;
+
+  let html = "";
+  html += "<table>";
+  html += "<tr><th>選項</th><th>勝率（模擬）</th><th>賠率</th><th>每單位期望值 (EV)</th><th>Kelly f</th></tr>";
+  for (const o of opts) {
+    html += "<tr>";
+    html += "<td>" + o.name + "</td>";
+    html += "<td>" + ( (n===0)? "0.00%" : (o.prob*100).toFixed(2) + "%") + "</td>";
+    html += "<td>" + o.payout + " :1</td>";
+    html += "<td>" + o.ev.toFixed(4) + "</td>";
+    html += "<td>" + o.f.toFixed(4) + "</td>";
+    html += "</tr>";
+  }
+  html += "</table>";
+
+  html += "<p style='margin-top:8px;'><strong>建議：</strong> ";
+  if (sugg.recommended) {
+    html += sugg.recommended.name + " — " + sugg.reason + "。建議押注比例：" + (sugg.fraction*100).toFixed(2) + "%，建議押注金額：" + sugg.amount + "（以本金計）。";
+  } else {
+    html += "不建議投注（無正期望值）。";
+  }
+  html += "</p>";
+
+  container.innerHTML = html;
+}
+
+// 「模擬並建議投注」按鈕行為
+function onSimulateAndSuggest() {
+  const n = parseInt(document.getElementById("inputRounds").value, 10) || 0;
+  const bankroll = Number(document.getElementById("inputBankroll").value) || 0;
+  const append = document.getElementById("chkAppend").checked;
+
+  if (n <= 0) {
+    alert("請輸入有效的局數 (>0)。");
+    return;
+  }
+  if (bankroll <= 0) {
+    alert("請輸入有效的本金 (>0)。");
+    return;
+  }
+
+  const start = performance.now();
+  const res = simulateRounds(n);
+  const end = performance.now();
+
+  // 如果選擇 append，則把結果加入全域統計；否則只用於建議（不改變全域統計）
+  if (append) {
+    b += res.addB;
+    p += res.addP;
+    t += res.addT;
+    total += n;
+    refreshDOM();
+  }
+
+  // 計算建議
+  const suggestion = computeSuggestion(res.addB, res.addP, res.addT, n, bankroll);
+  renderSuggestion(suggestion, n);
+
+  // 顯示模擬回報
+  document.getElementById("result").innerText = "模擬完成（" + n + " 局）。最後一手：" + res.last + "。新增：莊 " + res.addB + " / 閒 " + res.addP + " / 和 " + res.addT + "。";
+  document.getElementById("timing").innerText = "模擬耗時（不含 UI 更新）： " + (end - start).toFixed(2) + " ms";
+}
+
+// 重置統計
+function resetStats() {
+  b = 0; p = 0; t = 0; total = 0;
+  refreshDOM();
+  document.getElementById("result").innerText = "";
+  document.getElementById("timing").innerText = "";
+  document.getElementById("suggestContent").innerHTML = "<p class='small'>尚未進行模擬。請輸入局數與本金，然後按「模擬並建議投注」。</p>";
+}
+
+// 綁定按鈕事件
+document.getElementById("btnOne").addEventListener("click", () => drawOne());
+document.getElementById("btn100").addEventListener("click", () => drawMany(100));
+document.getElementById("btn1k").addEventListener("click", () => drawMany(1000));
+document.getElementById("btn10k").addEventListener("click", () => {
+  if (confirm("確定要連抽 10,000 次？這可能會花一些時間。")) drawMany(10000);
+});
+document.getElementById("btnReset").addEventListener("click", () => {
+  if (confirm("確定要清空所有統計？")) resetStats();
+});
+document.getElementById("btnCSV").addEventListener("click", () => downloadCSV());
+document.getElementById("btnSimSuggest").addEventListener("click", () => onSimulateAndSuggest());
+
+</script>
+
+</body>
+</html>
